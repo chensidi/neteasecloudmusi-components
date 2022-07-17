@@ -77,6 +77,10 @@ h6 {
   transition: top .3s;
   user-select: none;
 
+  /* &.m-playbar-unlock {
+    top: -7px;
+  } */
+
   .updn {
     position: relative;
     z-index: 11;
@@ -447,7 +451,7 @@ h6 {
     width: 980px;
     height: auto;
     opacity: .2;
-    filter: blur(3px);
+    filter: blur(22px);
   }
 
   .listbd {

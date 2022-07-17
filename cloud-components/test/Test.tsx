@@ -59,8 +59,8 @@ const Child = defineComponent({
         <div>
           {msg}
           <button onClick={clichHandler}>
-            {slots.default()}
-            {slots.title()}
+            {slots?.default()}
+            {slots?.title()}
             {count.value}
           </button>
         </div>

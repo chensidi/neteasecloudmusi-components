@@ -1,5 +1,8 @@
-import { computed, ref, watch, Ref, ComputedRef, reactive } from 'vue'
+import { computed, ref, watch, Ref, ComputedRef, reactive, nextTick } from 'vue'
 import { useFetch, useStorage, createFetch } from '@vueuse/core'
+import Clipboard from 'clipboard'
+import { ElMessage } from 'element-plus'
+import 'element-plus/dist/index.css'
 
 import { timeFormat, downRow, formatLrc } from './utils/tools'
 import { baseUrl } from './constant'
@@ -25,9 +28,9 @@ function useTime(timeStamp: number | Ref<number>) {
   }
 }
 
-function useArtists(ar: Array<any>, attr: string = 'name') {
-  const artistsArr = ar.map((item: { name: string }) => {
-    return item[attr]
+function useArtists<T, K extends keyof T>(ar: Array<T>, attr: string = 'name') {
+  const artistsArr = ar.map((item) => {
+    return item[attr as K]
   })
 
   return artistsArr.join('/')
@@ -81,7 +84,7 @@ function useSongInfo(id: Ref<number | string>) {
     picUrl: '',
     ar: [],
     dt: 0,
-    id: null,
+    id: 0,
   })
   watch(data, (now) => {
     if (now) {
@@ -108,7 +111,7 @@ function useSongInfo(id: Ref<number | string>) {
 
 function usePlayRecord() {
   const state = useStorage('playRecord', [])
-  return state
+  return state as Ref<Array<SongItem>>
 }
 
 function usePlayOrder() {
@@ -183,6 +186,40 @@ function useCurrentInfo(
   return info
 }
 
+function useScrollList() {
+  nextTick(() => {
+    document.querySelector('li.z-sel')?.scrollIntoView({
+      behavior: 'smooth',
+      block: 'center',
+    })
+  })
+}
+
+// 复制文本
+function useCopyText(text: string): void
+function useCopyText(asyncHandler: () => Promise<string>): void
+async function useCopyText(arg: string | (() => Promise<string>)) {
+  const hdBtn = document.createElement('button')
+  hdBtn.style.display = 'none'
+  document.body.appendChild(hdBtn)
+  let text = ''
+  if (typeof arg === 'string') {
+    text = arg
+  } else {
+    text = await arg()
+  }
+  const clipboard = new Clipboard(hdBtn, {
+    text() {
+      return text
+    },
+  }).on('success', () => {
+    ElMessage.success(`复制链接成功：${text}`)
+  })
+  hdBtn.click()
+  clipboard.destroy()
+  document.body.removeChild(hdBtn)
+}
+
 export {
   useTime,
   useSongUrl,
@@ -195,4 +232,6 @@ export {
   useCurrentInfo,
   usePlayOrder,
   useCurId,
+  useScrollList,
+  useCopyText,
 }

@@ -1,3 +1,5 @@
+let React
+
 import {
   defineComponent,
   onBeforeUnmount,
@@ -27,22 +29,25 @@ import {
   Audio,
   PlayPanel,
 } from './components'
-import { usePlayRecord, usePlayOrder, useCurId } from '../hooks'
+import { usePlayRecord, usePlayOrder, useCurId, useScrollList } from '../hooks'
 import { SongItem } from './types'
+import { registKeyEvent } from './keyboardEvents'
+
+// const React = {}
 
 const PlayBar = defineComponent({
   name: 'PlayBar',
   props: {
     id: {
-      //当前歌曲id
+      // 当前歌曲id
       type: Number,
-      default: 188261, //咖啡
+      default: 188261, // 咖啡
     },
   },
   setup(props) {
     const playState: Ref<boolean> = ref(false)
     const audio = ref()
-    const historyRecord: Ref<Array<SongItem>> = usePlayRecord()
+    const historyRecord = usePlayRecord() as Ref<Array<SongItem>>
     const id = computed(() => props.id)
     const memoId = useCurId()
     const curId = memoId.value
@@ -63,6 +68,20 @@ const PlayBar = defineComponent({
     provide('jumpToTime', (timeStamp: number) => {
       audio.value.jumpToTime(timeStamp)
     })
+    provide('lock', ref(true))
+
+    // 注册键盘快捷键
+    registKeyEvent({
+      prev() {
+        cutBtns.value.handleCut(false)
+      },
+      next() {
+        cutBtns.value.handleCut(true)
+      },
+      playPause() {
+        cutBtns.value.togglePlay()
+      },
+    })
 
     watchEffect(() => {
       if (!audio.value) return
@@ -77,17 +96,24 @@ const PlayBar = defineComponent({
 
     // 获取切换按钮ref，控制当前歌曲结束时切换动作
     const cutBtns = ref()
+    provide('cutBtns', cutBtns)
     function endNotice() {
       if (playOrder.value < 2) {
+        // 列表循环/随机
+        if (historyRecord.value.length <= 1) {
+          return (playState.value = false)
+        }
         cutBtns.value.handleCut(true)
       }
     }
 
     watch(id, (now) => {
       curId.value = now
+      useScrollList()
     })
     watch(curId, (now) => {
       memoId.value = now
+      useScrollList()
     })
 
     function renderContent() {

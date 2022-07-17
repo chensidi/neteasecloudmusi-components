@@ -26,7 +26,17 @@ export function formatLrc(lrc) {
       })
     }
   })
+  if (!split2.length) {
+    split2 = formatPureLrc(lrc)
+  }
   return split2
+}
+
+function formatPureLrc(lrc) {
+  //没有时间戳的歌词
+  return lrc.split('\n').map((item) => {
+    return { txt: item }
+  })
 }
 
 export function timeFormat(allSeconds, formatter = 'mm-ss', slipter = ':') {
@@ -82,7 +92,6 @@ export function playSong(song, reactiveCurInfo) {
 
 export function isSongExist(id, list) {
   const res = list.some((item) => item.id === id)
-  console.log(res)
   return res
 }
 

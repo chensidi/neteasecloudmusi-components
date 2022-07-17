@@ -1,3 +1,4 @@
+let React
 import {
   defineComponent,
   onBeforeUnmount,
@@ -11,9 +12,11 @@ import {
   watch,
   computed,
   Transition,
+  nextTick,
 } from 'vue'
 import classNames from 'classnames'
 import 'animate.css'
+import Clipboard from 'clipboard'
 
 import {
   useTime,
@@ -24,6 +27,8 @@ import {
   useDownLoadSong,
   useLrc,
   useCurrentInfo,
+  useCopyText,
+  useScrollList,
 } from '../hooks'
 
 import { isSongExist, loopOrder, shuffleOrder } from '../utils/tools'
@@ -33,10 +38,10 @@ import { SongItem, LrcItem } from './types'
 // 切歌按钮组
 export const CutsBtns = defineComponent({
   setup({}, { expose }) {
-    const historyRecord: Ref<Array<SongItem>> = inject('historyRecord')
-    const id: Ref<number> = inject('curId')
-    const playState: Ref<boolean> = inject('playState')
-    const playOrder: Ref<number> = inject('playOrder')
+    const historyRecord = inject('historyRecord') as Ref<Array<SongItem>>
+    const id = inject('curId') as Ref<number>
+    const playState = inject('playState') as Ref<boolean>
+    const playOrder = inject('playOrder') as Ref<number>
 
     function togglePlay() {
       playState.value = !playState.value
@@ -44,6 +49,7 @@ export const CutsBtns = defineComponent({
 
     const shuffle = shuffleOrder(historyRecord.value)
     function handleCut(flag: boolean) {
+      if (historyRecord.value.length <= 1) return
       switch (playOrder.value) {
         case 0:
           return (id.value = loopOrder(id.value, historyRecord.value, flag))
@@ -56,6 +62,7 @@ export const CutsBtns = defineComponent({
 
     expose({
       handleCut,
+      togglePlay,
     })
 
     return () => {
@@ -88,7 +95,7 @@ export const ProgressBar = defineComponent({
   setup() {
     const progress = ref()
     const isPress = ref(true)
-    const isLoading: Ref<boolean> = inject('isLoading')
+    const isLoading = inject('isLoading') as Ref<boolean>
     function handleMouseDown() {
       isPress.value = false
     }
@@ -119,14 +126,14 @@ export const ProgressBar = defineComponent({
       progressNum.value = percent
     }
 
-    const jumpToTime: (timeStamp: number) => void = inject('jumpToTime')
+    const jumpToTime = inject('jumpToTime') as (timeStamp: number) => void
     function handleClick(e: MouseEvent) {
       goThePoint(e)
       jumpToTime(((progressNum.value as number) / 100) * allTime.value)
     }
 
-    const allTime: Ref<number> = inject('fullTime')
-    const buffered: Ref<string> = inject('buffered')
+    const allTime = inject('fullTime') as Ref<number>
+    const buffered = inject('buffered') as Ref<string>
     const { curTime, fullTime, setCurTime } = useTime(allTime)
 
     watchEffect(() => {
@@ -135,7 +142,7 @@ export const ProgressBar = defineComponent({
       setCurTime(+num.toFixed(0))
     })
 
-    const currentTime: Ref<number> = inject('curTime')
+    const currentTime = inject('curTime') as Ref<number>
     watch(currentTime, (now: number) => {
       progressNum.value = ((now / allTime.value) * 100).toFixed(4)
     })
@@ -169,7 +176,7 @@ export const ProgressBar = defineComponent({
   },
 })
 
-const WordsPart = ({ name, artists }) => {
+const WordsPart = ({ name = '', artists = '' }) => {
   return (
     <div class="j-flag words">
       <a class="f-thide name fc1 f-fl" title={name}>
@@ -185,7 +192,10 @@ const WordsPart = ({ name, artists }) => {
   )
 }
 
-const ImgLink = ({ url, alt }) => {
+const ImgLink = ({
+  url = 'http://s4.music.126.net/style/web2/img/default/default_album.jpg',
+  alt = '',
+}) => {
   return (
     <a class="head j-flag">
       <img src={`${url}?param=34y34`} alt={alt} />
@@ -201,13 +211,14 @@ export const MidContent = defineComponent({
     const { info } = useSongInfo(curId)
     const artists = computed(() => useArtists(info.ar))
 
-    const playRecord: Ref<Array<SongItem>> = inject('historyRecord')
+    const playRecord = inject('historyRecord') as Ref<Array<SongItem>>
     watch(
       info,
       (now) => {
         // 检测到id不一致，往里新增记录
         if (!isSongExist(now.id, playRecord.value)) {
           playRecord.value.unshift({ ...now })
+          useScrollList()
         }
       },
       {
@@ -249,10 +260,10 @@ export const MainWrap = defineComponent({
 // 右侧工具栏
 export const RightTools = defineComponent({
   setup() {
-    const showPanel: Ref<boolean> = inject('showPanel')
-    const historyRecord: Ref<Array<any>> = inject('historyRecord')
+    const showPanel = inject('showPanel') as Ref<boolean>
+    const historyRecord = inject('historyRecord') as Ref<Array<any>>
     const recordNumber = computed(() => historyRecord.value.length)
-    const playOrder: Ref<number> = inject('playOrder')
+    const playOrder = inject('playOrder') as Ref<number>
 
     // 切换播放顺序
     function switchPlayOrder() {
@@ -296,11 +307,12 @@ export const RightTools = defineComponent({
 // 展开/收起按钮
 export const UpDownCtrl = defineComponent({
   setup() {
+    const lock = inject('lock') as Ref<boolean>
     return () => {
       return (
         <div class="updn">
           <div class="left f-fl">
-            <span class="btn"></span>
+            <span class="btn" onClick={() => (lock.value = !lock.value)}></span>
           </div>
           <div class="right f-fl"></div>
         </div>
@@ -320,10 +332,51 @@ export const DecoratedElements = () => {
 }
 
 // 播放组件容器
-export const PlayBarWrap = ({ renderContent }) => {
+export const PlayBarWrap = ({
+  renderContent,
+}: {
+  renderContent: () => JSX.Element
+}) => {
+  const lock = inject('lock') as Ref<boolean>
+  // 鼠标移出，若未锁定则playbar下移
+  const mouseIn = ref(true)
+  const bar = ref<HTMLElement>()
+  let timer: number | null
+  function mouseOutHandler(e: MouseEvent) {
+    e.stopPropagation()
+    if (!lock.value) {
+      if (timer) {
+        clearTimeout(timer)
+      }
+      timer = setTimeout(() => {
+        bar.value!.style.top = '-7px'
+        timer = null
+      }, 700)
+    }
+  }
+  function mouseEnterHandler(e: MouseEvent) {
+    e.stopPropagation()
+    if (!lock.value) {
+      bar.value!.style.top = '-53px'
+      if (timer) {
+        clearTimeout(timer)
+        timer = null
+      }
+    }
+  }
   return (
     <section class="g-btmbar">
-      <div class="m-playbar m-playbar-lock">{renderContent()}</div>
+      <div
+        onMouseleave={mouseOutHandler}
+        onMouseover={mouseEnterHandler}
+        class={classNames(
+          'm-playbar',
+          lock.value ? 'm-playbar-lock' : 'm-playbar-unlock'
+        )}
+        ref={bar}
+      >
+        {renderContent()}
+      </div>
     </section>
   )
 }
@@ -339,8 +392,8 @@ export const Audio = defineComponent({
   },
   emits: ['end'],
   setup({ errorReport }, { emit }) {
-    const id: Ref<number> = inject('curId')
-    const isLoading: Ref<boolean> = inject('isLoading')
+    const id = inject('curId') as Ref<number>
+    const isLoading = inject('isLoading') as Ref<boolean>
     const { dataSource: url, reload, isFetching } = useSongUrl(id)
 
     watchEffect(() => {
@@ -353,7 +406,7 @@ export const Audio = defineComponent({
       }
     })
 
-    const playState: Ref<boolean> = inject('playState')
+    const playState = inject('playState') as Ref<number>
     // 获取真实audio节点
     const audioRef = ref()
     onMounted(() => {
@@ -369,7 +422,7 @@ export const Audio = defineComponent({
     }
 
     // 错误处理
-    function errorHandler(e: ErrorEvent) {
+    function errorHandler(e: Event) {
       //可以错误上报
       errorReport(e)
       // 重新加载
@@ -380,7 +433,7 @@ export const Audio = defineComponent({
     }
 
     // 缓冲进度
-    const buffered: Ref<string> = inject('buffered')
+    const buffered = inject('buffered') as Ref<string>
     function progresHandler() {
       const timeRanges = audioRef.value.buffered
       // 获取已缓存的时间
@@ -389,13 +442,13 @@ export const Audio = defineComponent({
     }
 
     // 加载完成
-    const fullTime: Ref<number> = inject('fullTime')
+    const fullTime = inject('fullTime') as Ref<number>
     function loadedHandler() {
       fullTime.value = Math.ceil(audioRef.value.duration)
     }
 
     // 时间更新
-    const curTime: Ref<number> = inject('curTime')
+    const curTime = inject('curTime') as Ref<number>
     function updateHandler() {
       const currentTime = Math.round(audioRef.value.currentTime)
       curTime.value = currentTime
@@ -415,10 +468,11 @@ export const Audio = defineComponent({
     }
 
     // 播放结束
-    const playOrder: Ref<number> = inject('playOrder')
+    const playOrder = inject('playOrder') as Ref<number>
     function endHandler() {
       emit('end')
       if (playOrder.value === 2) {
+        // 单曲循环模式
         play()
       }
     }
@@ -457,10 +511,10 @@ export const Audio = defineComponent({
 const LrcPanel = defineComponent({
   name: 'LrcPanel',
   setup() {
-    const curId: Ref<number> = inject('curId')
-    const curTime: Ref<number> = inject('curTime')
-    const lrc: Ref<Array<LrcItem>> = useLrc(curId)
-    const lrcRef: Ref<HTMLElement> = ref()
+    const curId = inject('curId') as Ref<number>
+    const curTime = inject('curTime') as Ref<number>
+    const lrc = useLrc(curId) as Ref<Array<LrcItem>>
+    const lrcRef = ref() as Ref<HTMLElement>
 
     // id变化，回到顶部
     watch(curId, () => {
@@ -472,7 +526,9 @@ const LrcPanel = defineComponent({
 
     // 根据当前时间，滑动到对应位置
     watch(curTime, () => {
-      if (isWheeling.value) return
+      if (isWheeling.value) return //滑动中不操作
+      if (!lrc.value.length) return //无歌词不操作
+      if (activeIdx.value === '') return //无时间不操作
       lrcRef.value.getElementsByTagName('p')[activeIdx.value].scrollIntoView({
         behavior: 'smooth',
         block: 'center',
@@ -481,6 +537,7 @@ const LrcPanel = defineComponent({
 
     // 当前激活的歌词下标
     const activeIdx = computed(() => {
+      if (lrc.value[0].time == null) return ''
       const idx = lrc.value.findIndex((item) => item.time > curTime.value)
       if (idx === 0) {
         return 0
@@ -493,7 +550,7 @@ const LrcPanel = defineComponent({
 
     // 滚轮控制
     const isWheeling = ref(false)
-    let timer: number
+    let timer: number | null
     function wheelHandler() {
       console.log('wheel')
       isWheeling.value = true
@@ -504,22 +561,33 @@ const LrcPanel = defineComponent({
       }, 3000)
     }
 
+    function renderLrcList() {
+      return lrc.value.map(({ time, txt }, i) => {
+        return (
+          <p
+            class={classNames('j-flag', {
+              'z-sel': i === activeIdx.value,
+            })}
+            data-time="0"
+            key={time}
+          >
+            {txt}
+          </p>
+        )
+      })
+    }
+
     return () => {
       return (
         <div class="listlyric j-flag" ref={lrcRef} onWheel={wheelHandler}>
-          {lrc.value.map(({ time, txt }, i) => {
-            return (
-              <p
-                class={classNames('j-flag', {
-                  'z-sel': i === activeIdx.value,
-                })}
-                data-time="0"
-                key={time}
-              >
-                {txt}
-              </p>
-            )
-          })}
+          {lrc.value.length ? (
+            <>
+              {lrc.value[0].time == null && <p>*该歌词不支持自动滚动*</p>}
+              {renderLrcList()}
+            </>
+          ) : (
+            <p>暂无歌词</p>
+          )}
         </div>
       )
     }
@@ -529,11 +597,24 @@ const LrcPanel = defineComponent({
 export const PlayPanel = defineComponent({
   name: 'PlayPanel',
   setup() {
-    const showPanel: Ref<boolean> = inject('showPanel')
-    const historyRecord: Ref<Array<SongItem>> = inject('historyRecord')
+    const showPanel = inject('showPanel') as Ref<boolean>
+    const historyRecord = inject('historyRecord') as Ref<Array<SongItem>>
     const recordNumber = computed(() => historyRecord.value.length)
-    const curId: Ref<number> = inject('curId')
+    const curId = inject('curId') as Ref<number>
     const curInfo: SongItem = useCurrentInfo(curId, historyRecord)
+
+    // 打开面板时，对应active列表滚动至中间位置
+    watch(showPanel, (now: boolean) => {
+      if (now) {
+        useScrollList()
+      }
+    })
+
+    function clearHandler() {
+      // 清除所有记录
+      console.log('clear All')
+      historyRecord.value = []
+    }
 
     return () => {
       return (
@@ -554,7 +635,7 @@ export const PlayPanel = defineComponent({
                   收藏全部
                 </span>
                 <span class="line"></span>
-                <span class="clear">
+                <span class="clear" onClick={clearHandler}>
                   <i class="ico icn-del"></i>
                   清除
                 </span>
@@ -578,7 +659,7 @@ export const PlayPanel = defineComponent({
 
 const PlayListGroup = defineComponent({
   setup() {
-    const playRecord = inject('historyRecord')
+    const playRecord = inject('historyRecord') as Ref<SongItem[]>
     return {
       playRecord,
     }
@@ -602,25 +683,73 @@ const PlayItem = defineComponent({
   name: 'PlayItem',
   inheritAttrs: false,
   props: {
-    name: { type: String, required: true },
-    artists: Array,
-    duration: Number,
-    id: { type: Number, required: true },
+    name: {
+      required: true,
+      type: String,
+    },
+    artists: {
+      type: Array,
+      default: [],
+    },
+    duration: {
+      type: Number,
+      required: true,
+    },
+    id: {
+      required: true,
+      type: Number,
+    },
   },
   setup({ name, artists, duration, id }) {
     const art = useArtists(artists)
     const { fullTime } = useTime(duration)
-    const curId: Ref<number> = inject('curId')
-    const playRecord: Ref<Array<SongItem>> = inject('historyRecord')
+    const curId = inject('curId') as Ref<number>
+    const playRecord = inject('historyRecord') as Ref<Array<SongItem>>
+    const cutBtns = inject('cutBtns') as Ref<any>
+
+    // 删除一条历史
     function deleteHandler(id: number, e: MouseEvent) {
       e.stopPropagation()
       const idx = playRecord.value.findIndex((item) => item.id === id)
-      playRecord.value.splice(idx, 1)
+      playRecord.value.splice(idx, 1) // 删除目标
+      cutBtns.value.handleCut(true) // 切换到下一条
     }
     function downLoadHandler(id: number, name: string, e: MouseEvent) {
       e.stopPropagation()
       useDownLoadSong(id, name)
     }
+
+    //复制链接
+    /* const copyRef = ref<HTMLElement>()
+    function copyLink(id: number, e: MouseEvent) {
+      e.stopPropagation()
+      const { dataSource } = useSongUrl(ref(id))
+      watch(dataSource, (url: string) => {
+        new Clipboard(copyRef.value as HTMLElement, {
+          text() {
+            return url
+          },
+        })
+        copyRef.value?.click()
+      })
+    }
+    function copyHandler(e: MouseEvent) {
+      e.stopPropagation()
+    } */
+
+    function getUrl(id: number): Promise<string> {
+      return new Promise((resovle) => {
+        const { dataSource } = useSongUrl(ref(id))
+        watch(dataSource, (url: string) => {
+          resovle(url)
+        })
+      })
+    }
+    function copyLink(id: number, e: MouseEvent) {
+      e.stopPropagation()
+      useCopyText(() => getUrl(id))
+    }
+
     return () => {
       return (
         <li
@@ -652,7 +781,7 @@ const PlayItem = defineComponent({
           </div>
           <div class="col col-5">{fullTime.value}</div>
           <div class="col col-6">
-            <i class="ico ico-src"></i>
+            <i class="ico ico-src" onClick={(e) => copyLink(id, e)}></i>
           </div>
         </li>
       )
